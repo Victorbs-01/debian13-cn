@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Trap para capturar errores y mostrar mensaje
-trap 'echo "ERROR: Falló en línea $LINENO. Comando: $BASH_COMMAND"' ERR
+trap 'echo "ERROR: Falló en línea ${LINENO}. Comando: ${BASH_COMMAND}"' ERR
 
 echo "==> 0) Prepara keyrings y limpia restos"
 rm -f /etc/apt/keyrings/docker.gpg || echo "INFO: No había clave GPG previa para eliminar"
@@ -277,16 +277,67 @@ else
 fi
 
 echo ""
-echo "==> ✓ Instalación completada"
-if [ -n "$USER_NAME" ] && [ "$USER_NAME" != "root" ]; then
-    echo ""
-    echo "IMPORTANTE: Para que los permisos de Docker surtan efecto completamente:"
-    echo "  1. Cierra sesión completamente y vuelve a iniciar"
-    echo "  2. O ejecuta: newgrp docker"
-    echo ""
-    echo "Para verificar que funcionó:"
-    echo "  groups"
-    echo "  docker ps"
+echo "════════════════════════════════════════════════════════════════"
+echo "                    RESUMEN DE INSTALACIÓN"
+echo "════════════════════════════════════════════════════════════════"
+echo ""
+echo "✓ Docker CE instalado y configurado exitosamente"
+echo ""
+echo "📦 Componentes instalados:"
+echo "   - docker-ce"
+echo "   - docker-ce-cli"
+echo "   - containerd.io"
+echo "   - docker-buildx-plugin"
+echo "   - docker-compose-plugin"
+echo ""
+echo "🌐 Repositorios configurados:"
+echo "   - Debian: mirrors.tuna.tsinghua.edu.cn/debian (trixie)"
+echo "   - Docker CE: mirrors.tuna.tsinghua.edu.cn/docker-ce/linux/debian ($DOCKER_CODENAME)"
+if [ "$TRIXIE_AVAILABLE" = false ]; then
+    echo "   ⚠ Usando bookworm como fallback (trixie no disponible)"
 fi
 echo ""
-echo "==> ✓ Todos los pasos completados exitosamente."
+echo "🔑 Mirrors de Docker Hub configurados (para China):"
+echo "   - https://docker.m.daocloud.io"
+echo "   - https://hub-mirror.c.163.com"
+echo "   - https://mirror.ccs.tencentyun.com"
+echo "   - https://docker.mirrors.ustc.edu.cn"
+echo ""
+echo "⚙️ Configuración del sistema:"
+echo "   - IPv4 forwarding: Habilitado"
+echo "   - Servicio Docker: Habilitado e iniciado"
+echo "   - Socket Docker: Permisos configurados"
+if [ -n "$USER_NAME" ] && [ "$USER_NAME" != "root" ]; then
+    echo "   - Usuario '$USER_NAME': Agregado al grupo docker"
+fi
+echo ""
+echo "📋 Archivos de configuración:"
+echo "   - /etc/apt/sources.list (respaldo: sources.list.bak.*)"
+echo "   - /etc/apt/sources.list.d/docker.list"
+echo "   - /etc/apt/keyrings/docker.gpg"
+echo "   - /etc/docker/daemon.json"
+if [ -f /etc/docker/daemon.json.bak.* ]; then
+    echo "   - Respaldo: /etc/docker/daemon.json.bak.*"
+fi
+echo "   - /etc/sysctl.d/99-docker-forwarding.conf"
+echo ""
+if [ -n "$USER_NAME" ] && [ "$USER_NAME" != "root" ]; then
+    echo "⚠️  ACCIÓN REQUERIDA:"
+    echo "   Para que los permisos de Docker surtan efecto completamente:"
+    echo ""
+    echo "   1. Cierra sesión completamente y vuelve a iniciar"
+    echo "      O ejecuta: newgrp docker"
+    echo ""
+    echo "   2. Verifica que funcionó:"
+    echo "      groups"
+    echo "      docker ps"
+    echo ""
+fi
+echo "🧪 Próximos pasos sugeridos:"
+echo "   - Probar: docker run hello-world"
+echo "   - Verificar: docker version"
+echo "   - Inspeccionar: docker info"
+echo ""
+echo "════════════════════════════════════════════════════════════════"
+echo "==> ✓ Instalación completada exitosamente"
+echo "════════════════════════════════════════════════════════════════"
