@@ -5,8 +5,70 @@ set -euo pipefail
 trap 'echo "ERROR: Falló en línea $LINENO. Comando: $BASH_COMMAND"' ERR
 
 echo "==> 0) Prepara keyrings y limpia restos"
+rm -f /etc/apt/keyrings/docker.gpg || echo "INFO: No había clave GPG previa para eliminar"
 mkdir -p /etc/apt/keyrings || { echo "ERROR: No se pudo crear /etc/apt/keyrings"; exit 1; }
 rm -f /etc/apt/sources.list.d/docker*.list /etc/apt/trusted.gpg.d/docker.gpg || echo "INFO: No había archivos Docker previos para limpiar"
+
+echo "==> 0.5) Verificar conectividad con mirrors TUNA"
+echo "Comprobando acceso a mirrors TUNA..."
+
+# Verificar mirror principal de Debian
+echo -n "  - Mirror Debian principal: "
+if curl -fsSL --connect-timeout 5 --max-time 10 \
+   https://mirrors.tuna.tsinghua.edu.cn/debian/dists/trixie/Release > /dev/null 2>&1; then
+    echo "✓ Accesible"
+else
+    echo "✗ NO accesible"
+    echo "ERROR: No se puede acceder al mirror principal de Debian en TUNA"
+    echo "       Verifica tu conexión a Internet o que el mirror esté disponible"
+    exit 1
+fi
+
+# Verificar mirror de seguridad de Debian
+echo -n "  - Mirror Debian Security: "
+if curl -fsSL --connect-timeout 5 --max-time 10 \
+   https://mirrors.tuna.tsinghua.edu.cn/debian-security/dists/trixie-security/Release > /dev/null 2>&1; then
+    echo "✓ Accesible"
+else
+    echo "✗ NO accesible"
+    echo "ERROR: No se puede acceder al mirror de seguridad de Debian en TUNA"
+    echo "       Verifica tu conexión a Internet o que el mirror esté disponible"
+    exit 1
+fi
+
+# Verificar mirror de Docker CE
+echo -n "  - Mirror Docker CE: "
+if curl -fsSL --connect-timeout 5 --max-time 10 \
+   https://mirrors.tuna.tsinghua.edu.cn/docker-ce/linux/debian/dists/trixie/Release > /dev/null 2>&1; then
+    echo "✓ Accesible (trixie disponible)"
+    TRIXIE_AVAILABLE=true
+elif curl -fsSL --connect-timeout 5 --max-time 10 \
+     https://mirrors.tuna.tsinghua.edu.cn/docker-ce/linux/debian/dists/bookworm/Release > /dev/null 2>&1; then
+    echo "⚠ Accesible (solo bookworm disponible, trixie no)"
+    TRIXIE_AVAILABLE=false
+else
+    echo "✗ NO accesible"
+    echo "ERROR: No se puede acceder al mirror de Docker CE en TUNA"
+    echo "       Verifica tu conexión a Internet o que el mirror esté disponible"
+    exit 1
+fi
+
+# Verificar acceso a clave GPG de Docker
+echo -n "  - Clave GPG de Docker: "
+if curl -fsSL --connect-timeout 5 --max-time 10 \
+   https://mirrors.tuna.tsinghua.edu.cn/docker-ce/linux/debian/gpg > /dev/null 2>&1; then
+    echo "✓ Accesible"
+else
+    echo "✗ NO accesible"
+    echo "ERROR: No se puede acceder a la clave GPG de Docker en TUNA"
+    echo "       Verifica tu conexión a Internet"
+    exit 1
+fi
+
+echo "✓ Todos los mirrors de TUNA están accesibles"
+if [ "$TRIXIE_AVAILABLE" = false ]; then
+    echo "INFO: Se usará bookworm como fallback para Docker CE"
+fi
 
 echo "==> 1) Respaldar y cambiar mirrors a TUNA (Debian 13 - trixie)"
 cp -a /etc/apt/sources.list /etc/apt/sources.list.bak.$(date +%s) || { echo "ERROR: No se pudo respaldar sources.list"; exit 1; }
@@ -34,22 +96,48 @@ echo "✓ Pre-requisitos instalados"
 echo "Creando directorio de keyrings..."
 install -m 0755 -d /etc/apt/keyrings || { echo "ERROR: No se pudo crear directorio de keyrings"; exit 1; }
 
-echo "Descargando clave GPG de Docker..."
-curl -fsSL https://download.docker.com/linux/debian/gpg \
-  | gpg --dearmor -o /etc/apt/keyrings/docker.gpg || { echo "ERROR: Falló la descarga de la clave GPG"; exit 1; }
-chmod a+r /etc/apt/keyrings/docker.gpg || { echo "ERROR: No se pudo cambiar permisos de la clave GPG"; exit 1; }
-echo "✓ Clave GPG de Docker configurada"
+echo "Descargando clave GPG de Docker desde mirror TUNA..."
+echo "NOTA: Usando mirror TUNA para evitar problemas de conexión con download.docker.com"
+curl -fsSL https://mirrors.tuna.tsinghua.edu.cn/docker-ce/linux/debian/gpg \
+  | gpg --dearmor -o /etc/apt/keyrings/docker.gpg || { echo "ERROR: Falló la descarga de la clave GPG desde TUNA"; exit 1; }
+chmod 0644 /etc/apt/keyrings/docker.gpg || { echo "ERROR: No se pudo cambiar permisos de la clave GPG"; exit 1; }
+echo "✓ Clave GPG de Docker configurada desde mirror TUNA"
 
 echo "==> 4) Repo de Docker CE apuntando a TUNA"
 CODENAME="$(. /etc/os-release && echo "$VERSION_CODENAME")" # debe ser trixie
 echo "Usando codename: $CODENAME"
+
+# Usar bookworm si la verificación anterior detectó que trixie no está disponible
+if [ "$TRIXIE_AVAILABLE" = false ]; then
+    echo "INFO: Configurando repositorio Docker con bookworm (trixie no disponible en TUNA)"
+    DOCKER_CODENAME="bookworm"
+else
+    DOCKER_CODENAME="$CODENAME"
+fi
+
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
-https://mirrors.tuna.tsinghua.edu.cn/docker-ce/linux/debian $CODENAME stable" \
+https://mirrors.tuna.tsinghua.edu.cn/docker-ce/linux/debian $DOCKER_CODENAME stable" \
   | tee /etc/apt/sources.list.d/docker.list > /dev/null || { echo "ERROR: No se pudo crear docker.list"; exit 1; }
 
 echo "Actualizando índices con repo Docker..."
 apt-get update || { echo "ERROR: Falló apt-get update después de agregar repo Docker"; exit 1; }
-echo "✓ Repositorio Docker configurado y actualizado"
+
+# Verificar si trixie está disponible en TUNA, si no, cambiar a bookworm
+if ! apt-cache policy | grep -q "mirrors.tuna.tsinghua.edu.cn/docker-ce/linux/debian.*${DOCKER_CODENAME}"; then
+    echo "ADVERTENCIA: El repositorio Docker para $DOCKER_CODENAME no aparece en apt-cache policy"
+    if [ "$DOCKER_CODENAME" = "trixie" ]; then
+        echo "==> Cambiando a bookworm (fallback)"
+        sed -i 's/ trixie / bookworm /' /etc/apt/sources.list.d/docker.list || { echo "ERROR: No se pudo cambiar a bookworm"; exit 1; }
+        echo "Actualizando índices con repo Docker (bookworm)..."
+        apt-get update || { echo "ERROR: Falló apt-get update con bookworm"; exit 1; }
+        echo "✓ Repositorio Docker configurado con bookworm (fallback)"
+    else
+        echo "ERROR: El repositorio Docker no está disponible"
+        exit 1
+    fi
+else
+    echo "✓ Repositorio Docker configurado y actualizado ($DOCKER_CODENAME)"
+fi
 
 echo "==> 5) Instalar Docker CE"
 echo "Instalando paquetes Docker..."
