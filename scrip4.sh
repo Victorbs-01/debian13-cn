@@ -243,7 +243,7 @@ fi
 echo "==> 11) Smoke tests rápidos"
 echo "Verificando versión de Docker..."
 if docker version > /dev/null 2>&1; then
-    docker version | head -n 5
+    docker version 2>/dev/null | head -5 || docker version 2>/dev/null
     echo "✓ Docker version funciona"
 else
     echo "⚠️ Docker instalado, pero se requiere nueva sesión para permisos persistentes"
@@ -253,7 +253,7 @@ fi
 echo "Ejecutando test: hello-world..."
 if docker run --rm hello-world > /dev/null 2>&1; then
     echo "✓ Test hello-world exitoso"
-    docker run --rm hello-world | head -n 5
+    docker run --rm hello-world 2>/dev/null | head -5 || docker run --rm hello-world 2>/dev/null | head -n 5 || docker run --rm hello-world 2>/dev/null
 else
     echo "⚠️ Test hello-world falló (posible bloqueo de China, usando mirrors configurados)"
     echo "   Los mirrors de Docker están configurados, intenta de nuevo después de reiniciar sesión"
