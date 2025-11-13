@@ -4,6 +4,46 @@
 
 Este script automatiza la instalación limpia de Docker CE en Debian 13 (Trixie), configurando los repositorios para usar el mirror TUNA de Tsinghua University (China) para mejorar la velocidad de descarga en regiones específicas. El script también realiza pruebas de funcionamiento (smoke tests) para verificar que Docker está correctamente instalado y configurado.
 
+## Requisitos Previos
+
+### Configurar Usuario con Permisos Sudo
+
+**Este script requiere permisos sudo para ejecutarse.** Si el usuario no tiene permisos sudo, un administrador debe agregarlo primero.
+
+#### Opción 1: Como root directo (Más simple)
+
+```bash
+# Cambiar a root
+su -
+
+# Agregar usuario al grupo sudo
+usermod -aG sudo tu_usuario
+```
+
+#### Opción 2: Si ya tienes acceso sudo
+
+```bash
+# Agregar usuario al grupo sudo directamente
+sudo usermod -aG sudo tu_usuario
+```
+
+#### Opción 3: Usar script5.sh (Recomendado)
+
+```bash
+# Ejecutar el script de configuración de usuario
+sudo ./script5.sh tu_usuario
+```
+
+**Importante**: Después de agregar al usuario al grupo sudo:
+- El usuario debe **cerrar sesión completamente** y volver a iniciar
+- O ejecutar `newgrp sudo` en su sesión actual
+
+Para verificar que funcionó:
+```bash
+groups
+sudo -l
+```
+
 ## Características
 
 - **Limpieza previa**: Elimina cualquier instalación previa de Docker para evitar conflictos
@@ -15,7 +55,7 @@ Este script automatiza la instalación limpia de Docker CE en Debian 13 (Trixie)
 ## Requisitos
 
 - Sistema operativo: Debian 13 (Trixie)
-- Permisos: Ejecutar como root o con sudo
+- Permisos: Ejecutar como root o con sudo (ver sección "Requisitos Previos" arriba)
 - Conexión a Internet: Requerida para descargar paquetes y claves GPG
 
 ## Pasos del Script
@@ -103,6 +143,7 @@ El script incluye manejo de errores robusto:
 - La clave GPG de Docker se descarga desde el sitio oficial (no del mirror) por seguridad
 - Todos los pasos incluyen verificación de errores y mensajes informativos
 - Los smoke tests verifican tanto la funcionalidad básica como la conectividad de red
+- **El usuario debe tener permisos sudo antes de ejecutar el script** (ver sección "Requisitos Previos")
 
 ## Resultado Esperado
 
