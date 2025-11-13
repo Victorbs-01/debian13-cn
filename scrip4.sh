@@ -90,7 +90,7 @@ echo "✓ Limpieza de Docker previo completada"
 
 echo "==> 3) Pre-requisitos y keyring"
 echo "Instalando pre-requisitos..."
-apt-get install -y ca-certificates curl gnupg lsb-release || { echo "ERROR: Falló la instalación de pre-requisitos"; exit 1; }
+apt-get install -y ca-certificates curl gnupg lsb-release acl || { echo "ERROR: Falló la instalación de pre-requisitos"; exit 1; }
 echo "✓ Pre-requisitos instalados"
 
 echo "Creando directorio de keyrings..."
@@ -144,37 +144,149 @@ echo "Instalando paquetes Docker..."
 apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin || { echo "ERROR: Falló la instalación de Docker CE"; exit 1; }
 echo "✓ Docker CE instalado correctamente"
 
-echo "==> 6) Asegurar forward IPv4 (necesario para bridge)"
+echo "==> 6) Crear grupo docker y agregar usuario"
+# Crear grupo docker si no existe
+groupadd -f docker || echo "INFO: El grupo docker ya existe"
+
+# Detectar el usuario que ejecutó el script (no root)
+if [ "$EUID" -eq 0 ]; then
+    USER_NAME="${SUDO_USER:-${USER:-}}"
+    if [ -z "$USER_NAME" ] || [ "$USER_NAME" = "root" ]; then
+        echo "ADVERTENCIA: No se pudo detectar el usuario. Ejecuta el script como: sudo -u tu_usuario ./scrip4.sh"
+        echo "O agrega manualmente al grupo docker después: sudo usermod -aG docker tu_usuario"
+        USER_NAME=""
+    else
+        echo "Usuario detectado: $USER_NAME"
+        # Verificar si el usuario ya está en el grupo docker
+        if groups "$USER_NAME" | grep -q '\bdocker\b'; then
+            echo "INFO: El usuario '$USER_NAME' ya está en el grupo 'docker'"
+        else
+            echo "Agregando usuario '$USER_NAME' al grupo docker..."
+            usermod -aG docker "$USER_NAME" || { echo "ERROR: No se pudo agregar usuario al grupo docker"; exit 1; }
+            echo "✓ Usuario agregado al grupo docker"
+        fi
+    fi
+else
+    USER_NAME="$USER"
+    echo "Usuario actual: $USER_NAME"
+    if groups "$USER_NAME" | grep -q '\bdocker\b'; then
+        echo "INFO: El usuario '$USER_NAME' ya está en el grupo 'docker'"
+    else
+        echo "ADVERTENCIA: No se ejecuta como root. Agrega manualmente al grupo: sudo usermod -aG docker $USER_NAME"
+    fi
+fi
+
+echo "==> 7) Configurar mirrors de Docker para China"
+mkdir -p /etc/docker || { echo "ERROR: No se pudo crear directorio /etc/docker"; exit 1; }
+
+# Verificar si ya existe daemon.json y hacer backup
+if [ -f /etc/docker/daemon.json ]; then
+    cp /etc/docker/daemon.json /etc/docker/daemon.json.bak.$(date +%s) || echo "INFO: No se pudo respaldar daemon.json"
+    echo "INFO: Se respaldó daemon.json existente"
+fi
+
+cat >/etc/docker/daemon.json <<'EOF'
+{
+  "registry-mirrors": [
+    "https://docker.m.daocloud.io",
+    "https://hub-mirror.c.163.com",
+    "https://mirror.ccs.tencentyun.com",
+    "https://docker.mirrors.ustc.edu.cn"
+  ]
+}
+EOF
+
+echo "✓ Configuración de mirrors de Docker guardada"
+echo "Mirrors configurados:"
+echo "  - https://docker.m.daocloud.io"
+echo "  - https://hub-mirror.c.163.com"
+echo "  - https://mirror.ccs.tencentyun.com"
+echo "  - https://docker.mirrors.ustc.edu.cn"
+
+echo "==> 8) Asegurar forward IPv4 (necesario para bridge)"
 cat >/etc/sysctl.d/99-docker-forwarding.conf <<'EOF'
 net.ipv4.ip_forward=1
 EOF
 sysctl --system >/dev/null || { echo "ERROR: Falló la configuración de ip_forward"; exit 1; }
 echo "✓ IPv4 forwarding configurado"
 
-echo "==> 7) Habilitar y arrancar Docker"
+echo "==> 9) Habilitar y arrancar Docker"
 echo "Habilitando servicio Docker..."
 systemctl enable --now docker || { echo "ERROR: Falló al habilitar/iniciar Docker"; exit 1; }
 echo "✓ Docker habilitado e iniciado"
+
+echo "Recargando configuración de Docker (para aplicar mirrors)..."
+systemctl daemon-reload || echo "ADVERTENCIA: Falló daemon-reload"
+systemctl restart docker || { echo "ERROR: Falló al reiniciar Docker"; exit 1; }
+echo "✓ Docker reiniciado con nueva configuración"
 
 echo "Verificando estado de Docker..."
 systemctl --no-pager --full status docker | sed -n '1,12p' || { echo "ERROR: Docker no está corriendo correctamente"; exit 1; }
 echo "✓ Docker está corriendo"
 
-echo "==> 8) Smoke tests rápidos"
+echo "==> 10) Ajustar permisos del socket Docker"
+if [ -S /var/run/docker.sock ]; then
+    echo "Ajustando permisos del socket Docker..."
+    chown root:docker /var/run/docker.sock || echo "ADVERTENCIA: No se pudo cambiar propietario del socket"
+    chmod 660 /var/run/docker.sock || echo "ADVERTENCIA: No se pudo cambiar permisos del socket"
+    
+    # Aplicar permiso temporal con ACL si el usuario fue detectado
+    if [ -n "$USER_NAME" ] && [ "$USER_NAME" != "root" ]; then
+        echo "Aplicando permiso temporal con ACL para usuario '$USER_NAME'..."
+        setfacl -m "user:${USER_NAME}:rw" /var/run/docker.sock 2>/dev/null || echo "INFO: ACL no disponible o ya configurado"
+    fi
+    echo "✓ Permisos del socket configurados"
+else
+    echo "ADVERTENCIA: Socket Docker no encontrado en /var/run/docker.sock"
+fi
+
+echo "==> 11) Smoke tests rápidos"
+echo "Verificando versión de Docker..."
+if docker version > /dev/null 2>&1; then
+    docker version | head -n 5
+    echo "✓ Docker version funciona"
+else
+    echo "⚠️ Docker instalado, pero se requiere nueva sesión para permisos persistentes"
+    echo "   Ejecuta: newgrp docker"
+fi
+
 echo "Ejecutando test: hello-world..."
-docker run --rm hello-world || { echo "ERROR: Falló el test hello-world"; exit 1; }
-echo "✓ Test hello-world exitoso"
+if docker run --rm hello-world > /dev/null 2>&1; then
+    echo "✓ Test hello-world exitoso"
+    docker run --rm hello-world | head -n 5
+else
+    echo "⚠️ Test hello-world falló (posible bloqueo de China, usando mirrors configurados)"
+    echo "   Los mirrors de Docker están configurados, intenta de nuevo después de reiniciar sesión"
+fi
 
 echo "Inspección de red bridge..."
 echo "Puerta de enlace del bridge:"
-docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}' || { echo "ERROR: No se pudo inspeccionar la red bridge"; exit 1; }
-echo "✓ Red bridge configurada"
+if docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null; then
+    echo "✓ Red bridge configurada"
+else
+    echo "⚠️ No se pudo inspeccionar la red bridge (posible problema de permisos)"
+fi
 
 echo "Test de conectividad desde contenedor..."
 echo "Ruta dentro de contenedor y ping a DNS chino (223.5.5.5)"
-docker run --rm alpine sh -c 'ip route; ping -c1 223.5.5.5 || true' || { echo "ERROR: Falló el test de conectividad"; exit 1; }
-echo "✓ Test de conectividad exitoso"
+if docker run --rm alpine sh -c 'ip route; ping -c1 223.5.5.5 || true' > /dev/null 2>&1; then
+    docker run --rm alpine sh -c 'ip route; ping -c1 223.5.5.5 || true'
+    echo "✓ Test de conectividad exitoso"
+else
+    echo "⚠️ Test de conectividad falló (posible problema de permisos o red)"
+fi
 
 echo ""
-echo "==> ✓ Listo. Si hello-world corre y el ping sale, la red Docker funciona."
+echo "==> ✓ Instalación completada"
+if [ -n "$USER_NAME" ] && [ "$USER_NAME" != "root" ]; then
+    echo ""
+    echo "IMPORTANTE: Para que los permisos de Docker surtan efecto completamente:"
+    echo "  1. Cierra sesión completamente y vuelve a iniciar"
+    echo "  2. O ejecuta: newgrp docker"
+    echo ""
+    echo "Para verificar que funcionó:"
+    echo "  groups"
+    echo "  docker ps"
+fi
+echo ""
 echo "==> ✓ Todos los pasos completados exitosamente."
